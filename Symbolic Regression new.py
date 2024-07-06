@@ -13,8 +13,7 @@ import sqlite3
 import re
 import pandas as pd
 from tqdm import tqdm
-import os
-import json
+
 
 
 def is_float(string):
@@ -235,6 +234,7 @@ def generate_postfix_permutations(operands, unary_operators, binary_operators, d
         return len(set(operand_count)) != len(operand_count)
 
     valid_postfix_expressions = set()
+    desired_length = random.randint(1, desired_length)
     attempts = 0  # to avoid infinite loop in case of too restrictive conditions
     while len(valid_postfix_expressions) < sample_size and attempts < sample_size:
         perm = tuple(np.random.choice(elements, size=desired_length, p=weights))
@@ -250,11 +250,11 @@ operands = ['d1', 'd2', 'S' , 'K' , 'r', 'T']
 unary_operators = ['norm','exp']
 binary_operators = ['-', '*']
 desired_length = 14
-sample_size = 1000000
+sample_size = 1000
 
 np.random.seed(0)
 num_options = 10
-S0 = 100  # Initial stock price
+S0 = np.random.uniform(80, 120, num_options)  # Initial stock price
 K = np.random.uniform(80, 120, num_options)  # Strike prices
 T = np.random.uniform(0.1, 1, num_options)  # Time to maturity
 r = np.random.uniform(0.1, 0.8, num_options) # Risk-free rate
@@ -307,28 +307,43 @@ def get_different_choice(current, choices):
     new_choice = random.choice([choice for choice in choices if choice != current])
     return new_choice
 
-def generate_mutated_expressions(initial, operands, unary_operators, binary_operators):
+def contains_invalid_sequence(expression, invalid_sequences):
+    """ Check if the expression contains any of the invalid sequences """
+    expr_str = ' '.join(expression)  # Convert list to string for easier searching
+    for seq in invalid_sequences:
+        seq_str = ' '.join(seq)
+        if seq_str in expr_str:
+            return True
+    return False
+
+def generate_mutated_expressions(initial, operands, unary_operators, binary_operators, constraints):
     mutated_expressions = []
+
+    # Define the invalid sequences
+    
 
     for expr in initial:
         new_expr = expr.copy()  # Create a copy of the current expression
 
         index = random.randint(0, len(new_expr) - 1)  # Select a random element to replace
         operand_positions = [index for index, element in enumerate(new_expr) if element in operands]
-        
+
         # Switch the variables positions
         if new_expr[index] in operands:
             if len(operand_positions) > 1:
                 pos2 = random.choice([pos for pos in operand_positions if pos != index])
                 new_expr[index], new_expr[pos2] = new_expr[pos2], new_expr[index]
-        if new_expr[index] in unary_operators:
+        elif new_expr[index] in unary_operators:
             new_expr[index] = get_different_choice(new_expr[index], unary_operators)
         elif new_expr[index] in binary_operators:
             new_expr[index] = get_different_choice(new_expr[index], binary_operators)
 
-        mutated_expressions.append(new_expr)  # Append the mutated expression to the new list
+        # Append the mutated expression to the new list if it does not contain an invalid sequence
+        if not contains_invalid_sequence(new_expr, constraints):
+            mutated_expressions.append(new_expr)
 
     return mutated_expressions + initial
+
 
 def create_database(db_file):
     conn = sqlite3.connect(db_file)
@@ -356,7 +371,9 @@ def save_expressions_to_db(db_file, expressions):
     conn.close()
         
 def find_hall_of_fame(operands, unary_operators, binary_operators, desired_length,
-                      sample_size, X, y, num_mutations, mape_threshold, db_file='Black_Scholes_expressions.db'):
+                      sample_size, X, y,
+                      num_mutations, mape_threshold, constraints,
+                      db_file='expressions.db'):
     
     create_database(db_file)
     evaluated_expressions_set = load_expressions_from_db(db_file)
@@ -365,7 +382,8 @@ def find_hall_of_fame(operands, unary_operators, binary_operators, desired_lengt
     valid_postfix_expressions = generate_postfix_permutations(operands, unary_operators, binary_operators, desired_length, sample_size)
     
     for _ in range(num_mutations):
-        valid_postfix_expressions = generate_mutated_expressions(valid_postfix_expressions, operands, unary_operators, binary_operators)
+        valid_postfix_expressions = generate_mutated_expressions(valid_postfix_expressions, operands,
+                                                                 unary_operators, binary_operators, constraints)
     
     # Filter out already evaluated expressions
     valid_postfix_expressions = [expr for expr in valid_postfix_expressions if str(expr) not in evaluated_expressions_set]
@@ -399,8 +417,16 @@ def find_hall_of_fame(operands, unary_operators, binary_operators, desired_lengt
     
     return hall_of_fame
 
-mape_threshold = 0.2
-hall_of_fame = find_hall_of_fame(operands, unary_operators, binary_operators, desired_length, sample_size, X, y, 10, mape_threshold)
+mape_threshold = 0.05
+constraints = [
+    ['norm', 'norm'],
+    ['norm', 'exp'],
+    ['exp', 'norm'],
+    ['exp', 'exp']
+]
+hall_of_fame = find_hall_of_fame(operands, unary_operators, binary_operators, desired_length,
+                                 sample_size, X, y, 12, mape_threshold,
+                                 constraints)
 
 # Print hall of fame equations along with their MAPE values
 print(" ")
@@ -409,3 +435,6 @@ for expr, mape_value in hall_of_fame:
     infix_expr = postfix_to_infix(expr)
     
     print(f"Equation: {infix_expr}, MAPE: {mape_value:.5f}")
+    
+#print(postfix_to_infix(['S','d1','norm','*','K','r','T','*','exp','d2','norm','*','*','-']))
+    
