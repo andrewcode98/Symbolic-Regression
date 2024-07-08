@@ -462,8 +462,5 @@ for expr, mape_value in hall_of_fame:
     print(f"Equation: {infix_expr}, MAPE: {mape_value:.5f}")
     
 #print(postfix_to_infix(['S','d1','norm','*','K','r','T','*','exp','d2','norm','*','*','-']))
-    
-    print(f"Equation: {infix_expr}, MAPE: {mape_value:.5f}")
-    
-#print(postfix_to_infix(['S','d1','norm','*','K','r','T','*','exp','d2','norm','*','*','-']))
+   
     
