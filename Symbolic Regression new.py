@@ -13,6 +13,10 @@ import sqlite3
 import re
 import pandas as pd
 from tqdm import tqdm
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
 
 
 
@@ -253,7 +257,7 @@ desired_length = 14
 sample_size = 1000
 
 np.random.seed(0)
-num_options = 10
+num_options = 100
 S0 = np.random.uniform(80, 120, num_options)  # Initial stock price
 K = np.random.uniform(80, 120, num_options)  # Strike prices
 T = np.random.uniform(0.1, 1, num_options)  # Time to maturity
@@ -289,14 +293,21 @@ y = data['CallPrice']
     
 def replace_operands_in_expressions(expressions, X):
     replaced_expressions = []
-
-    for _, row in X.iterrows():
+    
+    def replace_operands_for_row(row):
         replaced_row_expressions = []
         for expr in expressions:
             replaced_expr = [row[operand] if operand in row else operand for operand in expr]
             replaced_row_expressions.append(replaced_expr)
-        replaced_expressions.append(replaced_row_expressions)
-
+        return replaced_row_expressions
+    
+    # Use ThreadPoolExecutor for concurrent processing
+    with ThreadPoolExecutor() as executor:
+        futures = [executor.submit(replace_operands_for_row, row) for _, row in X.iterrows()]
+        
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Replacing operands in expressions"):
+            replaced_expressions.append(future.result())
+    
     return replaced_expressions
 
 
@@ -369,6 +380,9 @@ def save_expressions_to_db(db_file, expressions):
     c.executemany('INSERT OR IGNORE INTO expressions VALUES (?, ?)', expressions_to_save)
     conn.commit()
     conn.close()
+    
+def evaluate_expression(expression):
+    return Binary_Tree(expression).build_tree()
         
 def find_hall_of_fame(operands, unary_operators, binary_operators, desired_length,
                       sample_size, X, y,
@@ -400,11 +414,21 @@ def find_hall_of_fame(operands, unary_operators, binary_operators, desired_lengt
     mape = np.empty(len(valid_postfix_expressions), dtype=float)
     results = np.empty((len(X), len(valid_postfix_expressions)), dtype=float)
     
-    for i in tqdm(range(len(valid_postfix_expressions)), desc="Evaluating expressions"):
-        for j in range(len(X)):
-            results[j][i] = Binary_Tree(replaced_expressions[j][i]).build_tree()
+    # Flatten the tasks to parallelize
+    tasks = [(i, j) for i in range(len(valid_postfix_expressions)) for j in range(len(X))]
     
-        # Calculate MAPE
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future_to_task = {executor.submit(evaluate_expression, replaced_expressions[j][i]): (j, i) for i, j in tasks}
+        
+        for future in tqdm(concurrent.futures.as_completed(future_to_task), total=len(tasks), desc="Evaluating expressions"):
+            j, i = future_to_task[future]
+            try:
+                results[j][i] = future.result()
+            except Exception as exc:
+                print(f'Task {(j, i)} generated an exception: {exc}')
+    
+    # Calculate MAPE and update hall of fame
+    for i in range(len(valid_postfix_expressions)):
         mape[i] = np.mean(np.abs((y - results[:, i]) / y))
         
         # Add to hall of fame if MAPE < threshold
@@ -417,6 +441,7 @@ def find_hall_of_fame(operands, unary_operators, binary_operators, desired_lengt
     
     return hall_of_fame
 
+
 mape_threshold = 0.05
 constraints = [
     ['norm', 'norm'],
@@ -425,7 +450,7 @@ constraints = [
     ['exp', 'exp']
 ]
 hall_of_fame = find_hall_of_fame(operands, unary_operators, binary_operators, desired_length,
-                                 sample_size, X, y, 12, mape_threshold,
+                                 sample_size, X, y, 10, mape_threshold,
                                  constraints)
 
 # Print hall of fame equations along with their MAPE values
@@ -433,6 +458,10 @@ print(" ")
 print("Hall of fame equations:")
 for expr, mape_value in hall_of_fame:
     infix_expr = postfix_to_infix(expr)
+    
+    print(f"Equation: {infix_expr}, MAPE: {mape_value:.5f}")
+    
+#print(postfix_to_infix(['S','d1','norm','*','K','r','T','*','exp','d2','norm','*','*','-']))
     
     print(f"Equation: {infix_expr}, MAPE: {mape_value:.5f}")
     
